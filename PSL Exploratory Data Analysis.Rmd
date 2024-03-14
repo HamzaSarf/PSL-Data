@@ -1,0 +1,375 @@
+# Pakistan Super League Exploratory Data Analysis
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+For the purpose of this exercise, we'll deploy the very handy cricketdata package developed by Rob J Hyndman, which gathers data from cricsheet and cricinfo.
+
+```{r libraries}
+library(tidyverse)
+library(cricketdata)
+library(dplyr)
+library(ggplot2)
+library(plotly)
+```
+
+## Loading Ball by Ball and Match Data for PSL 2016-Present from Cricsheet
+
+```{r load_data}
+PSL_Ball <- fetch_cricsheet(competition = "psl", gender = "male")
+
+PSL_Match <- fetch_cricsheet("match", "psl", gender = "male")
+
+PSL_Player <- fetch_cricsheet("player", "psl", gender = "male")
+```
+
+## Understanding the Structure
+
+```{r structure, include=FALSE}
+str(PSL_Ball)
+str(PSL_Match)
+str(PSL_Player)
+```
+
+```{r summary_stats}
+summary(PSL_Ball)
+summary(PSL_Match)
+summary(PSL_Player)
+```
+
+```{r data-cleaning}
+sum(is.na(PSL_Ball))
+sum(is.na(PSL_Ball))
+sum(is.na(PSL_Ball))
+```
+
+## Merging Match and Ball-by-Ball Data
+
+```{r merging}
+PSL_Ball$match_id <- as.character(PSL_Ball$match_id)
+PSL_Match$match_id <- as.character(PSL_Match$match_id)
+Merged_Data <- merge(PSL_Match, PSL_Ball, by = "match_id")
+```
+
+```{r seasons}
+library(dplyr)
+Merged_Data <- Merged_Data |>
+  mutate(season.x = ifelse(season.x %in% c("2020/21", "2021"), "2020/21", season.x))
+```
+
+## Summary Statistics
+
+```{r Distribution of Runs}
+# Distribution of runs in Ball by Ball Data
+ggplot(Merged_Data, aes(x = runs_off_bat + extras)) +
+  geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))), binwidth = 1, fill = "lightblue", color = "black") +
+  scale_y_continuous(labels = scales::percent, name = "Percentage of Total Runs") +
+  labs(title = "Distribution of Runs", x = "Runs") +
+  theme_minimal()
+```
+
+```{r powerplay}
+# Filter for powerplay
+powerplay <- Merged_Data |>
+  filter((over >= 1 & over <= 6)) 
+
+# Plot histogram of runs off bat during powerplay
+ggplot(powerplay, aes(x = runs_off_bat)) +
+  geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))), binwidth = 1, fill = "lightblue", color = "black") +
+  scale_y_continuous(labels = scales::percent, name = "Percentage of Total Runs") +
+  labs(title = "Distribution of Runs in Powerplay", x = "Runs") +
+  theme_minimal()
+```
+
+```{r death overs}
+# Filter for death overs
+death_overs <- Merged_Data |>
+  filter((over >= 16 & over <= 20)) 
+
+# Plot histogram of runs off bat during death overs
+ggplot(death_overs, aes(x = runs_off_bat + extras)) +
+  geom_histogram(aes(y = after_stat(count) / sum(after_stat(count))), binwidth = 1, fill = "lightblue", color = "black") +
+  scale_y_continuous(labels = scales::percent, name = "Percentage of Total Runs") +
+  labs(title = "Distribution of Runs in Death Overs (16-20)", x = "Runs") +
+  theme_minimal()
+```
+
+```{r total_runs_scored}
+Total_Runs_Season <- Merged_Data |>
+  group_by(season.x) |>
+  summarise(Total_Runs = sum(runs_off_bat + extras))
+
+ggplot(Total_Runs_Season, aes(x = season.x, y = Total_Runs, fill = season.x)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  labs(title = "Total Runs Scored in Each Season", x = "Season", y = "Total Runs") +
+  theme_minimal() 
+```
+
+```{r average_runs_scored}
+Avg_Runs_Per_Match_Season <- Merged_Data |>
+  group_by(season.x, match_id, innings) |>
+  summarise(Total_Runs = sum(runs_off_bat + extras), .groups = 'drop') |>
+  group_by(season.x) |>
+  summarise(Avg_Runs_Per_Match = mean(Total_Runs))
+
+ggplot(Avg_Runs_Per_Match_Season, aes(x = season.x, y = Avg_Runs_Per_Match, fill = season.x)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  labs(title = "Average Runs Scored Per Innings by Season", x = "Season", y = "Average Runs Per Match") +
+  theme_minimal()
+```
+
+```{r average_run_rate}
+Average_Run_Rate <- Merged_Data |>
+  group_by(season.x, over) |> 
+  summarise(
+    Total_Runs = sum(runs_off_bat + extras, na.rm = TRUE),  # Calculate total runs
+    Total_Balls = n(),  # Count total deliveries (rows)
+    Total_Overs = Total_Balls / 6.0,  # Convert balls to overs
+    Avg_Run_Rate = Total_Runs / Total_Overs, #Calculate Average Run Rate
+    .groups = 'drop'
+  ) 
+
+# Step 4: Visualize the average run rate per over for each season
+ggplot(Average_Run_Rate, aes(x = over, y = Avg_Run_Rate)) +
+  geom_line(size = 1) +  
+  facet_wrap(~season.x, scales = "free_y") + # Creates a separate plot for each season
+  labs(title = "Average Run Rate by Season", x = "Over", y = "Average Run Rate") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+```{r top_batsmen}
+Top_Batsmen <- Merged_Data |>
+  group_by(season.x, striker) |>
+  summarise(Total_Runs = sum(runs_off_bat, na.rm = TRUE), .groups = 'drop') |>
+  group_by(season.x) |>
+  slice_max(order_by = Total_Runs, n = 3) |> 
+  ungroup()
+ggplot(Top_Batsmen, aes(x = reorder(striker, Total_Runs), y = Total_Runs, fill = season.x)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Top 3 Batsmen by Runs Scored Each Season", x = "Batsman", y = "Total Runs") +
+  theme_minimal() +
+  theme(legend.position = "none") +
+  facet_wrap(~ season.x, scales = "free_y", ncol = 2)
+```
+
+```{r top_bowlers}
+Top_Bowlers <- Merged_Data |>
+  group_by(season.x, bowler) |>
+  summarise(Total_Wickets = sum(as.numeric(wicket), na.rm = TRUE), .groups = 'drop_last') |>
+  slice_max(order_by = Total_Wickets, n = 3, with_ties = FALSE) |>
+  ungroup()
+
+ggplot(Top_Bowlers, aes(x = bowler, y = Total_Wickets, fill = season.x)) +
+  geom_col() +
+  coord_flip() +
+  labs(title = "Top 3 Bowlers by Wickets Taken Each Season", x = "Bowler", y = "Total Wickets") +
+  theme_minimal() +
+  theme(legend.position = "None") +
+  facet_wrap(~ season.x, scales = "free_y", ncol = 2)
+
+```
+
+```{r team_performance}
+
+# Calculate total matches and wins per team per season
+team_stats <- Merged_Data |>
+  select(season.x, team1, team2, winner) |>
+  mutate(match_played = 1) |>
+  pivot_longer(cols = c(team1, team2), names_to = "home_away", values_to = "team") %>%
+  group_by(season.x, team) |>
+  summarise(Total_Matches = sum(match_played), Wins = sum(winner == team, na.rm = TRUE), .groups = 'drop') |>
+  ungroup()
+
+# Calculate win percentage
+team_stats <- team_stats |>
+  mutate(Win_Percentage = (Wins / Total_Matches) * 100)
+
+ggplot(team_stats, aes(x = season.x, y = Win_Percentage, fill = team)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Team Win Percentage Across Seasons", x = "Season", y = "Win Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), legend.position = "bottom") +
+  scale_y_continuous(labels = function(x) paste0(x, "%"))  
+```
+
+```{r boundary_ball}
+boundary_balls <- Merged_Data |>
+  filter(runs_off_bat %in% c(4, 6)) |>
+  mutate(boundary = 1) # Mark boundary balls
+
+# Step 2: Calculate Boundary Ball Percentage
+boundary_percentage_by_season <- Merged_Data |>
+  group_by(season.x) |>
+  summarise(total_balls = n(), # Total number of deliveries
+            boundaries = sum(runs_off_bat %in% c(4, 6)), # Number of boundary balls
+            boundary_percentage = (boundaries / total_balls) * 100) # Calculate percentage
+
+# Step 3: Visualization
+ggplot(boundary_percentage_by_season, aes(x = season.x, y = boundary_percentage)) +
+  geom_col(fill = "steelblue") + # Bar plot
+  labs(title = "Boundary Ball Percentage by Season",
+       x = "Season",
+       y = "Boundary Percentage") +
+  theme_minimal() 
+
+```
+
+```{r}
+library(dplyr)
+
+# Assuming Merged_Data already contains ball-by-ball data along with match and team information
+# Calculate boundary ball percentage
+Run_Percentage <- Merged_Data %>%
+  mutate(boundary_ball = ifelse(runs_off_bat %in% c(4, 6), 1, 0),
+         dot_ball = ifelse(runs_off_bat == 0 & is.na(extras), 1, 0)) %>%
+  group_by(match_id, batting_team) %>%
+  summarise(total_boundaries = sum(boundary_ball),
+            total_dot_balls = sum(dot_ball),
+            total_balls = n(),
+            boundary_ball_percentage = (total_boundaries / total_balls) * 100,
+            dot_ball_percentage = (total_dot_balls / total_balls) * 100,
+            win = ifelse(batting_team == winner, 1, 0),
+            .groups = 'drop')
+ Run_Percentage$dot_ball_percentage <- as.numeric(Run_Percentage$dot_ball_percentage)
+
+```
+
+```{r boundary in powerplays}
+boundary_balls <- powerplay |>
+  filter(runs_off_bat %in% c(4, 6)) |>
+  mutate(boundary = 1) # Mark boundary balls
+
+# Step 2: Calculate Boundary Ball Percentage
+boundary_percentage_by_season <- powerplay |>
+  group_by(season.x) |>
+  summarise(total_balls = n(), # Total number of deliveries
+            boundaries = sum(runs_off_bat %in% c(4, 6)), # Number of boundary balls
+            boundary_percentage = (boundaries / total_balls) * 100) # Calculate percentage
+
+# Step 3: Visualization
+ggplot(boundary_percentage_by_season, aes(x = season.x
+                                          , y = boundary_percentage)) +
+  geom_col(fill = "steelblue") + # Bar plot
+  labs(title = "Boundary Ball Percentage in Powerplay",
+       x = "Season",
+       y = "Boundary Percentage") +
+  theme_minimal() 
+
+```
+
+```{r boundary in death overs}
+boundary_balls <- death_overs |>
+  filter(runs_off_bat %in% c(4, 6)) |>
+  mutate(boundary = 1) # Mark boundary balls
+
+# Step 2: Calculate Boundary Ball Percentage
+boundary_percentage_by_season <- death_overs |>
+  group_by(season.x) |>
+  summarise(total_balls = n(), # Total number of deliveries
+            boundaries = sum(runs_off_bat %in% c(4, 6)), # Number of boundary balls
+            boundary_percentage = (boundaries / total_balls) * 100) # Calculate percentage
+
+# Step 3: Visualization
+ggplot(boundary_percentage_by_season, aes(x = season.x, y = boundary_percentage)) +
+  geom_col(fill = "steelblue") + # Bar plot
+  labs(title = "Boundary Ball Percentage in Death Overs (16-20)",
+       x = "Season",
+       y = "Boundary Percentage") +
+  theme_minimal() 
+```
+
+```{r boundaries}
+
+# Step 1: Prepare the data
+boundaries_per_innings <- Merged_Data |>
+  filter(runs_off_bat %in% c(4, 6)) |>
+  mutate(boundary_type = ifelse(runs_off_bat == 4, "Fours", "Sixes")) |>
+  group_by(season.x, match_id, innings, boundary_type) |>
+  summarise(total_boundaries = n(), .groups = 'drop') |>
+  group_by(season.x, boundary_type) |>
+  summarise(avg_boundaries_per_innings = mean(total_boundaries), .groups = 'drop')
+
+# Step 2: Visualize the data
+ggplot(boundaries_per_innings, aes(x = season.x, y = avg_boundaries_per_innings, color = boundary_type, group = boundary_type)) +
+  geom_line() +  # Line plot
+  geom_point() +  
+  scale_color_manual(values = c("Fours" = "blue", "Sixes" = "red")) +  # Assign custom colors
+  labs(title = "Fours and Sixes per Innings by Season", x = "Season", y = "Average Boundaries per Innings") +
+  theme_minimal() +
+  theme(legend.title = element_blank())  # Remove the legend title
+
+```
+
+```{r dotballs}
+dot_ball_percentage <- Merged_Data |>
+  mutate(is_dot_ball = ifelse(runs_off_bat == 0 & is.na(wides) & is.na(noballs), 1, 0)) |>
+  group_by(season.x) |>
+  summarise(
+    dot_balls = sum(is_dot_ball, na.rm = TRUE),
+    total_deliveries = n() + sum(!is.na(wides) | !is.na(noballs), na.rm = TRUE),
+    dot_ball_percentage = (dot_balls / total_deliveries) * 100
+  ) |>
+  ungroup() |>
+  mutate(season.x = factor(season.x, levels = unique(season.x))) |>
+  arrange(season.x) 
+
+ggplot(dot_ball_percentage, aes(x = season.x, y = dot_ball_percentage, group = 1)) +
+  geom_line() +  # Ensure a single group for connecting lines
+  geom_point() +
+  labs(title = "Dot Ball Percentage Over Seasons", x = "Season", y = "Dot Ball Percentage") +
+  theme_minimal()
+```
+
+```{r chasing}
+Merged_Data <- Merged_Data |>
+  mutate(chasing_win = ifelse(winner == team2, 1, 0))
+
+# Now calculate win percentages for teams chasing, grouped by season
+win_percentage_by_season <- Merged_Data |>
+  group_by(season.x) |>
+  summarise(total_matches = n(),
+            chasing_wins = sum(chasing_win, na.rm = TRUE),  # Ensure NA values are handled
+            win_percentage = (chasing_wins / total_matches) * 100) |>
+  ungroup()  # Ungroup to ensure further operations aren't affected by grouping
+
+# Visualize win percentage for teams chasing over seasons
+ggplot(win_percentage_by_season, aes(x = season.x, y = win_percentage, fill = season.x)) +
+  geom_bar(stat = "identity", width = 0.7) +  # Bar chart with slightly reduced bar width for clarity
+  labs(title = "Win Percentage for Teams Chasing",
+       x = "Season", y = "Win Percentage") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for better readability
+        legend.position = "none")
+```
+
+# Models / Hypothesis
+
+```{r win probability}
+
+# Logistic regression model
+# Fit the logistic regression model using only boundary_ball_percentage
+model <- glm(win ~ boundary_ball_percentage, data = Run_Percentage, family = "binomial")
+
+# Summary of the model
+summary(model)
+
+# Generating a sequence of boundary ball percentages for predictions
+Run_Percentage$dot_ball_percentage
+```
+
+```{r {win vs boundary}
+boundary_seq <- seq(min(Run_Percentage$boundary_ball_percentage, na.rm = TRUE), 
+                    max(Run_Percentage$boundary_ball_percentage, na.rm = TRUE), length = 100)
+
+pred_data <- data.frame(boundary_ball_percentage = boundary_seq)
+pred_data$win_prob <- predict(model, newdata = pred_data, type = "response")
+
+ggplot(pred_data, aes(x = boundary_ball_percentage, y = win_prob)) +
+  geom_line() +
+  labs(title = "Win Probability vs. Boundary Ball Percentage",
+       x = "Boundary Ball Percentage", y = "Probability of Winning") +
+  theme_minimal()
+```
